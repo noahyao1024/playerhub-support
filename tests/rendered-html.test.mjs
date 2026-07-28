@@ -61,7 +61,7 @@ test("does not publish placeholders, private test data, or Personal features", a
   ).join("\n");
 
   assert.doesNotMatch(pages, /REQUIRED_|TODO|PLACEHOLDER/i);
-  assert.doesNotMatch(pages, /Noahs-Mac|10\.161\.|qwe123/i);
+  assert.doesNotMatch(pages, /Noahs-Mac|10\.161\.|SMB_PASSWORD/i);
   assert.doesNotMatch(
     pages,
     /\b(?:torrent|magnet|arcade|Bilibili|iQiyi|Invidious)\b/i,

@@ -1,91 +1,69 @@
 import assert from "node:assert/strict";
-import { access, readFile, readdir } from "node:fs/promises";
+import { readFile, stat } from "node:fs/promises";
 import test from "node:test";
 
-const developmentPreviewMeta =
-  /<meta(?=[^>]*\bname=["']codex-preview["'])(?=[^>]*\bcontent=["']development["'])[^>]*>/i;
-const templateRoot = new URL("../", import.meta.url);
-const previewRoot = new URL("../app/_sites-preview/", import.meta.url);
+const outputRoot = new URL("../out/", import.meta.url);
 
-async function render() {
-  const workerUrl = new URL("../dist/server/index.js", import.meta.url);
-  workerUrl.searchParams.set("test", `${process.pid}-${Date.now()}`);
-  const { default: worker } = await import(workerUrl.href);
-
-  return worker.fetch(
-    new Request("http://localhost/", {
-      headers: { accept: "text/html" },
-    }),
-    {
-      ASSETS: {
-        fetch: async () => new Response("Not found", { status: 404 }),
-      },
-    },
-    {
-      waitUntil() {},
-      passThroughOnException() {},
-    },
-  );
+async function exportedPage(path) {
+  return readFile(new URL(path, outputRoot), "utf8");
 }
 
-test("server-renders the starter loading skeleton", async () => {
-  const response = await render();
-  assert.equal(response.status, 200);
-  assert.match(response.headers.get("content-type") ?? "", /^text\/html\b/i);
-
-  const html = await response.text();
-  assert.match(html, developmentPreviewMeta);
-  assert.match(html, /<title>Your site is taking shape<\/title>/i);
-  assert.match(html, /Building your site/);
-  assert.match(html, /Your site is taking shape/);
-  assert.match(
-    html,
-    /Your first version will appear here automatically when it’s ready\./,
-  );
-  assert.doesNotMatch(html, /Codex/);
-  assert.match(html, /react-loading-skeleton/);
-  assert.match(html, /role="status"/);
-});
-
-test("keeps the loading skeleton scoped and disposable", async () => {
-  const [preview, css, page, layout, packageJson, files] = await Promise.all([
-    readFile(new URL("SkeletonPreview.tsx", previewRoot), "utf8"),
-    readFile(new URL("preview.css", previewRoot), "utf8"),
-    readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),
-    readFile(new URL("../app/layout.tsx", import.meta.url), "utf8"),
-    readFile(new URL("../package.json", import.meta.url), "utf8"),
-    readdir(previewRoot),
+test("exports the public App Store pages with production metadata", async () => {
+  const [home, support, privacy] = await Promise.all([
+    exportedPage("index.html"),
+    exportedPage("support/index.html"),
+    exportedPage("privacy/index.html"),
   ]);
 
-  assert.deepEqual(files.sort(), ["SkeletonPreview.tsx", "preview.css"]);
-  assert.match(preview, /from "react-loading-skeleton"/);
-  assert.match(preview, /baseColor="#eceae7"/);
-  assert.match(preview, /highlightColor="#f9f8f6"/);
-  assert.match(preview, /duration=\{2\.8\}/);
-  assert.match(preview, /sites-skeleton-search-placeholder/);
-  assert.match(packageJson, /"react-loading-skeleton": "3\.5\.0"/);
+  assert.match(home, /<title>Playerhub for Apple TV<\/title>/);
+  assert.match(home, /The cinema you already own\./);
+  assert.match(home, /No account/);
+  assert.match(home, /No media uploads/);
 
-  const shellIndex = preview.indexOf('className="sites-skeleton-shell"');
-  const statusIndex = preview.indexOf('className="sites-skeleton-status"');
-  assert.ok(shellIndex >= 0 && statusIndex > shellIndex);
-  assert.match(css, /position:\s*fixed/);
-  assert.match(css, /inset:\s*0/);
-  assert.match(css, /opacity:\s*0\.52/);
-  assert.match(css, /prefers-reduced-motion:\s*reduce/);
-  assert.doesNotMatch(css, /#020617|canvas|pets|progress/i);
-  assert.doesNotMatch(
-    preview,
-    /loading-spinner|status-mark|status-progress|canvas|cookie|random/i,
+  assert.match(support, /<title>Support \| Playerhub<\/title>/);
+  assert.match(support, /Connect in three steps\./);
+  assert.match(support, /Never email your server password\./);
+
+  assert.match(privacy, /<title>Privacy Policy \| Playerhub<\/title>/);
+  assert.match(privacy, /TMDb/);
+  assert.match(privacy, /OpenSubtitles/);
+  assert.match(privacy, /does not use it for analytics, advertising, profiling, or tracking/i);
+});
+
+test("uses deployable GitHub Pages links and assets", async () => {
+  const [home, support, privacy, noJekyll, socialImage] = await Promise.all([
+    exportedPage("index.html"),
+    exportedPage("support/index.html"),
+    exportedPage("privacy/index.html"),
+    readFile(new URL(".nojekyll", outputRoot), "utf8"),
+    stat(new URL("og.png", outputRoot)),
+  ]);
+  const pages = `${home}\n${support}\n${privacy}`;
+
+  assert.match(pages, /\/playerhub-support\/support\//);
+  assert.match(pages, /\/playerhub-support\/privacy\//);
+  assert.match(pages, /\/playerhub-support\/_next\/static\//);
+  assert.match(
+    pages,
+    /https:\/\/noahyao1024\.github\.io\/playerhub-support\/og\.png/,
   );
+  assert.match(noJekyll, /GitHub Pages Jekyll processing/i);
+  assert.ok(socialImage.size > 100_000);
+});
 
-  assert.match(page, /export const metadata:\s*Metadata/);
-  assert.match(page, /"codex-preview": "development"/);
-  assert.match(page, /<SkeletonPreview \/>/);
-  assert.match(layout, /title:\s*"Starter Project"/);
-  assert.doesNotMatch(layout, /codex-preview|_sites-preview|themeColor|\bViewport\b/);
-  assert.doesNotMatch(css, /(^|\s)(html|body)\s*\{/m);
+test("does not publish placeholders, private test data, or Personal features", async () => {
+  const pages = (
+    await Promise.all([
+      exportedPage("index.html"),
+      exportedPage("support/index.html"),
+      exportedPage("privacy/index.html"),
+    ])
+  ).join("\n");
 
-  await assert.rejects(
-    access(new URL("public/_sites-preview", templateRoot)),
+  assert.doesNotMatch(pages, /REQUIRED_|TODO|PLACEHOLDER/i);
+  assert.doesNotMatch(pages, /Noahs-Mac|10\.161\.|qwe123/i);
+  assert.doesNotMatch(
+    pages,
+    /\b(?:torrent|magnet|arcade|Bilibili|iQiyi|Invidious)\b/i,
   );
 });
